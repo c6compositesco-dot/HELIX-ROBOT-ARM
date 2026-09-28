@@ -1,0 +1,26 @@
+name: Firmware requirements
+on:
+  push:
+    paths: ['firmware/**', '.github/workflows/firmware-requirements.yml']
+  pull_request:
+    paths: ['firmware/**', '.github/workflows/firmware-requirements.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  specification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Test the requirements checker
+        run: python3 -m unittest discover -s firmware/tools -p test_requirements_checker.py -v
+      - name: Validate and export the specification
+        run: python3 firmware/tools/check_requirements.py --export "$RUNNER_TEMP/helix-requirements.json"
+      - name: Preserve the legacy binary
+        run: test "$(git hash-object firmware.bin)" = "d0b3d4aeba13a29693c312250d93c78aa5ea36f6"
+      - name: Report scope
+        run: |
+          echo 'Specification structure and references passed. This is not firmware behavior or hardware qualification.' >> "$GITHUB_STEP_SUMMARY"

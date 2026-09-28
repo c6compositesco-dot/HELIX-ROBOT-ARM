@@ -4,6 +4,12 @@
 
 Our portable robot-control core targets the Octopus Pro as the retained central controller. Drive and feedback adapters allow open-loop steps, motor sensing, networked drives, joint-output sensing and later suitable brushless drives without changing task-level joint semantics. This is an architecture contract, not hardware compatibility certification.
 
+## Requirements and researched design
+
+Start with the [complete requirements baseline](docs/requirements/README.md), [methods and alternatives](docs/requirements/METHODS.md), [implementation gaps](docs/requirements/INTEGRATION_GAPS.md) and [qualification plan](docs/requirements/QUALIFICATION.md). Every requirement has an ID, phase, owning issue and acceptance procedure. [Sources](docs/requirements/sources.json) distinguish evidence from limitations; [parameters](docs/requirements/parameters.json) distinguish study targets from unresolved measurements. Requirements are not claims that the features below are implemented.
+
+Run `python3 firmware/tools/check_requirements.py` to check structure/references, or add `--export /tmp/helix-requirements.json` for a machine-readable registry. The checker has its own negative tests and CI job; it cannot certify firmware behavior or physical safety.
+
 ## Sections and present status
 
 | Section | Present in this revision | Not yet implemented |
@@ -25,6 +31,8 @@ Our portable robot-control core targets the Octopus Pro as the retained central 
 cmake -S firmware -B firmware/build -DCMAKE_BUILD_TYPE=Debug
 cmake --build firmware/build --parallel
 ctest --test-dir firmware/build --output-on-failure
+python3 -m unittest discover -s firmware/tools -p test_requirements_checker.py -v
+python3 firmware/tools/check_requirements.py
 ```
 
 Sanitizers: add `-DHELIX_SANITIZERS=ON` with GCC/Clang. Tests use synthetic fixtures, never real joint calibration. Tests use checks that remain enabled in Release builds. The header-only core has fixed-capacity storage and no explicit dynamic allocation, exceptions or RTTI; this does not establish a worst-case MCU execution bound.
