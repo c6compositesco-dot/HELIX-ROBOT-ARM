@@ -34,9 +34,10 @@ struct InboxConfig {
   motion::MotionEnvelope limits{};
   motion::BoundBudget budget{};
   ContinuityTolerance continuity{};
-  TimeUs max_future_us{0}, lease_us{0};
+  TimeUs max_future_us{0}, lease_us{0}, preparation_lead_us{0};
   bool valid() const noexcept {
-    if (!budget.valid() || !continuity.valid() || max_future_us == 0 || lease_us == 0) return false;
+    if (!budget.valid() || !continuity.valid() || max_future_us == 0 || lease_us == 0
+        || preparation_lead_us == 0 || preparation_lead_us > max_future_us) return false;
     for (const auto& l : limits) if (!l.valid()) return false;
     return true;
   }
@@ -44,7 +45,7 @@ struct InboxConfig {
 enum class AdmissionCode {
   Accepted, Duplicate, Conflict, OutcomeUnknown, Invalid, Unsupported,
   OldSession, ModelMismatch, NotReady, Faulted, Expired, OutsideHorizon,
-  Full, Discontinuous, CurveRejected
+  Full, Discontinuous, CurveRejected, PreparationLate
 };
 enum class Delivery { None, Queued, Prepared, Cancelled, OutcomeUnknown };
 struct AdmissionReply {
@@ -78,7 +79,8 @@ class TrajectoryInbox {
     if (!current(key)) return Status::Stale;
     if (gate_.state() == ExecutionState::Faulted) return Status::Faulted;
     if (arm_used_) return Status::NotReady; // A revoked stream requires a fresh session.
-    if (first_start <= now || first_start - now > config_.max_future_us) return Status::Invalid;
+    if (first_start <= now || first_start - now > config_.max_future_us
+        || first_start - now < config_.preparation_lead_us) return Status::Invalid;
     // This slice admits a new stream only from a caller-qualified stationary reference.
     for (std::size_t i = 0; i < kJointCount; ++i)
       if (!std::isfinite(reference.q[i]) || reference.q[i] < config_.limits[i].lower_rad
@@ -128,6 +130,7 @@ class TrajectoryInbox {
     const auto& s = request.segment;
     if (!motion::valid_shape(s)) return {s.format == 1 ? AdmissionCode::Invalid : AdmissionCode::Unsupported};
     if (request.expires_us <= now || s.start_us <= now) return {AdmissionCode::Expired};
+    if (s.start_us - now < config_.preparation_lead_us) return {AdmissionCode::PreparationLate};
     if (request.expires_us > s.start_us || s.start_us + s.duration_us - now > config_.max_future_us)
       return {AdmissionCode::OutsideHorizon};
     if (size_ == QueueCapacity) return {AdmissionCode::Full};
@@ -144,6 +147,7 @@ class TrajectoryInbox {
     if (gate_.state() == ExecutionState::Faulted) return {AdmissionCode::Faulted};
     if (!permitted() || !have_tail_) return {AdmissionCode::NotReady};
     if (request.expires_us <= commit_time || s.start_us <= commit_time) return {AdmissionCode::Expired};
+    if (s.start_us - commit_time < config_.preparation_lead_us) return {AdmissionCode::PreparationLate};
 
     // Transaction commit: no callbacks, I/O, allocation, yield or possible capacity failure.
     queue_[(head_ + size_) % QueueCapacity] = request;
@@ -159,12 +163,33 @@ class TrajectoryInbox {
   std::optional<TrajectoryRequest> take_for_preparation(TimeUs now) noexcept {
     service(now);
     if (!permitted() || size_ == 0) return std::nullopt;
-    if (queue_[head_].segment.start_us < now) { trip(Fault::MotionDeadline); return std::nullopt; }
+    const TimeUs start = queue_[head_].segment.start_us;
+    if (start <= now || start - now < config_.preparation_lead_us) {
+      trip(Fault::MotionDeadline); return std::nullopt;
+    }
     const auto request = queue_[head_];
     head_ = (head_ + 1) % QueueCapacity; --size_;
     for (auto& receipt : receipts_) if (receipt.used && receipt.request.sequence == request.sequence)
       receipt.delivery = Delivery::Prepared;
     return request;
+  }
+  // A prepared copy is data, not an irrevocable execution capability. Call on the
+  // same serialized owner immediately before scheduling/normal output. Never cache
+  // a true result across a yield, interrupt or ownership transfer. Receipt eviction
+  // fails closed; size retention for the entire prepared/in-flight horizon.
+  bool prepared_authorized(const TrajectoryRequest& request, TimeUs now) noexcept {
+    service(now);
+    if (!permitted() || !current(request.owner) || request.model_revision != model_
+        || !motion::valid_shape(request.segment)
+        || now >= request.segment.start_us + request.segment.duration_us) return false;
+    for (const auto& receipt : receipts_)
+      if (receipt.used && receipt.delivery == Delivery::Prepared
+          && same_request(receipt.request, request)) return true;
+    return false;
+  }
+  bool execution_authorized(const TrajectoryRequest& request, TimeUs now) noexcept {
+    const bool authorized = prepared_authorized(request, now);
+    return authorized && now >= request.segment.start_us;
   }
   bool current(SessionKey key) const noexcept {
     return active_ && key.boot == boot_ && key.session == session_;

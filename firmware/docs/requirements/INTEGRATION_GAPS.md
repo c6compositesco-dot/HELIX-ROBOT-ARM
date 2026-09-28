@@ -10,7 +10,7 @@ The original foundation is e1bad256; the requirements baseline is 3f68253. The s
 | `motion/waypoint_queue.hpp` | Original single-owner point queue, unchanged | Do not use as full-path approval. #3 |
 | `motion/cubic_segment.hpp` | Cubic evaluation, outward-rounded continuous bounds with bounded subdivision | Actual target numeric qualification, collision/quantization margins, stopping horizon and event engine. #3/#9 |
 | `runtime/execution_gate.hpp` | Permission/lease faults plus motion-deadline fault code | Live checks, physical stopping/holding, homing and external reaction. #3/#9 |
-| `protocol/trajectory_inbox.hpp` | Serialized queue/receipt/sequence commit, C2/start checks, idempotent window, boot/session/lease invalidation | Wire ABI, ACK transport, concurrency, real timebase and actuator integration. #5 |
+| `protocol/trajectory_inbox.hpp` | Serialized commit, C2/start and preparation-lead checks, idempotent receipts, live prepared-request authorization and boot/session/lease invalidation | Wire ABI, ACK transport, concurrency, measured target lead, real timebase and actuator integration. #5 |
 | `protocol/admission.hpp` | Original standalone sequence check, unchanged | Do not compose it before a fallible queue insert; use the transaction boundary instead. #5 |
 | `drives/drive.hpp` | Capabilities and unavailable backend | Actual adapters, mode semantics, stop evidence and loop ownership. #3/#7/#8 |
 | `kinematics/solver.hpp` | Interface/unavailable solver | Real FK/Jacobian/IK with timing and shared model conformance. #4 |
@@ -25,4 +25,4 @@ Cubic certification concerns the mathematical joint trajectory, not collisions o
 
 Do not wire permission revocation to a universal disable-all policy, or mistake the maximum future-time bound for a validated stopping horizon. The local transaction has one serialized owner; it is not an ISR-safe queue or exactly-once guarantee across power loss.
 
-The root firmware provenance, physical board configuration, canonical model and independent safety/support behavior remain prerequisites for powered deployment. Unimplemented capabilities still fail or remain unavailable.
+The root firmware provenance, physical board configuration, canonical model and independent safety/support behavior remain prerequisites for powered deployment. Unimplemented capabilities still fail or remain unavailable. The [prepared-motion increment](../PREPARED_MOTION.md) supplies live software predicates and a stop-horizon design, not an implemented or measured physical stop.

@@ -123,6 +123,7 @@ static void bounds_suite() {
 static InboxConfig config() {
   InboxConfig c{}; c.limits = envelope(10, 10, 10, 10); c.budget = {8, 12264};
   c.continuity = {1e-10, 1e-10, 1e-10}; c.max_future_us = 10000000; c.lease_us = 5000000;
+  c.preparation_lead_us = 100;
   return c;
 }
 static ArmChecks qualified() { return {true, true, true, true, true}; }

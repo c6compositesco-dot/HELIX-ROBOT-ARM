@@ -1,6 +1,7 @@
 add_executable(helix_trajectory_tests tests/trajectory_transactions.cpp)
 add_executable(helix_admission_demo examples/admission_demo.cpp)
-foreach(target helix_trajectory_tests helix_admission_demo)
+add_executable(helix_prepared_tests tests/prepared_motion.cpp)
+foreach(target helix_trajectory_tests helix_admission_demo helix_prepared_tests)
   target_link_libraries(${target} PRIVATE helix_core)
   set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -15,6 +16,7 @@ foreach(suite trajectory_bounds trajectory_transactions trajectory_properties)
   add_test(NAME ${suite} COMMAND helix_trajectory_tests ${suite})
 endforeach()
 add_test(NAME trajectory_demo COMMAND helix_admission_demo)
+add_test(NAME prepared_motion COMMAND helix_prepared_tests)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   add_test(NAME trajectory_fast_math_guard COMMAND ${CMAKE_COMMAND}
     -DCXX=${CMAKE_CXX_COMPILER}
