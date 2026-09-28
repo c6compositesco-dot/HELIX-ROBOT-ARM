@@ -10,7 +10,8 @@ A caller establishes a fresh boot/session/model context, supplies a qualified st
 2. Resolve retained duplicate receipts without enqueuing again. Reject changed content under the same ID.
 3. Check expiry, bounded scheduling horizon and queue capacity.
 4. Certify continuous joint position, velocity, acceleration and jerk bounds; check start time and C2 boundary continuity.
-5. Commit the complete six-axis request, receipt, sequence and planned tail in fixed storage; return an admission receipt.
+5. Read the injected controller clock again; reject a lease, command or start time that expired during validation.
+6. Commit the complete six-axis request, receipt, sequence and planned tail in fixed storage; return an admission receipt.
 
 Only a single serialized owner may call the inbox. There are no callbacks, waits, allocations or fallible operations inside commit. This is a logical transaction boundary, **not** a CPU-atomic/ISR-safe or crash-persistent transaction. A board port must implement and qualify its producer/consumer exchange separately.
 
@@ -45,6 +46,8 @@ The receipt window is compile-time bounded and stores the typed request, avoidin
 
 `Queued` means admitted. `Prepared` means removed for a future preparation layer, not executed. On disarm/fault, queued receipts become `Cancelled`; already prepared work becomes `OutcomeUnknown`. There is no physical completion state in this slice. New sessions clear old pending data and do not clear latched faults. A stream may arm only once per session; re-arming after revoked permission requires a new session, so a previous prepared ticket cannot become valid merely because the same owner re-arms.
 
+Submission reads a `MonotonicClock` at entry and again immediately before the non-failing commit. Scripted-clock tests cover expiry and clock regression during validation. The remaining finite commit/preparation lead time still requires a measured target-specific budget.
+
 The caller must provision a unique boot identity and route actual controller time; this module does not invent entropy, authentication or a persistent recovery log. Old-boot/session rejection does not establish whether an earlier physical operation happened. No exactly-once guarantee is made across reset, power loss or an external actuator.
 
 Only valid owner health messages with fresh health-sequence numbers and unexpired timestamps refresh the lease. Ordinary commands, duplicates and invalid traffic do not. Lease expiry and clock regression latch faults and invalidate pending data. A preparation request arriving after its scheduled start latches `MotionDeadline` instead of producing catch-up motion. These are software permission changes, not physical stopping.
@@ -53,7 +56,7 @@ Only valid owner health messages with fresh health-sequence numbers and unexpire
 
 New tests: `trajectory_bounds`, `trajectory_transactions`, `trajectory_properties`, `trajectory_fast_math_guard`, and `trajectory_demo`. The original eight contract suites remain.
 
-The three new C++ suites execute 432810 checks per configuration, mostly deterministic property-sample assertions, **not 432810 independent scenarios**. They cover invalid inputs, each dynamic limit, legal endpoints with illegal interiors, conservative uncertainty, 512 queue/receipt wraps, retry/changed-ID behavior, receipt eviction, session changes, sequence exhaustion, continuity, deadlines and fault cancellation. The deterministic property corpus has 128 curves, with 99 certified and 29 rejected; accepted curves are compared at 101 timestamps on all six axes against an independent explicit long-double polynomial. Sampling is a regression oracle, not the certificate.
+The three new C++ suites execute 432823 checks per configuration, mostly deterministic property-sample assertions, **not 432823 independent scenarios**. They cover invalid inputs, each dynamic limit, legal endpoints with illegal interiors, conservative uncertainty, 512 queue/receipt wraps, retry/changed-ID behavior, receipt eviction, session changes, sequence exhaustion, continuity, deadlines and fault cancellation. The deterministic property corpus has 128 curves, with 99 certified and 29 rejected; accepted curves are compared at 101 timestamps on all six axes against an independent explicit long-double polynomial. Sampling is a regression oracle, not the certificate.
 
 Locally these suites passed GCC 14.2 Debug/Release, Clang 17 Debug/Release and Clang ASan/UBSan. A scoped C++ allocation trap exercised admission, validation and cancellation. The standalone four-segment host demo also passed with sanitizers. The negative floating-point compilation checks passed with both compilers. Full-repository CMake/requirements and old-suite regression are checked by hosted CI; consult the PR's exact revision checks rather than inferring them from these local runs.
 

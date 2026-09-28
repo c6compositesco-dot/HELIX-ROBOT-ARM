@@ -1,6 +1,7 @@
 #pragma once
 #include "helix/motion/cubic_segment.hpp"
 #include "helix/runtime/execution_gate.hpp"
+#include "helix/platform/clock.hpp"
 
 namespace helix::protocol {
 struct SessionKey { std::uint64_t boot{0}, session{0}; };
@@ -109,7 +110,8 @@ class TrajectoryInbox {
   Fault fault() const noexcept { return gate_.fault(); }
   std::size_t queued() const noexcept { return size_; }
 
-  AdmissionReply submit(const TrajectoryRequest& request, TimeUs now) noexcept {
+  AdmissionReply submit(const TrajectoryRequest& request, const MonotonicClock& clock) noexcept {
+    const TimeUs now = clock.now_us();
     service(now); // Permission may expire even when the request itself is invalid.
     if (request.version != 1) return {AdmissionCode::Unsupported};
     if (!current(request.owner)) return {AdmissionCode::OldSession};
@@ -135,6 +137,13 @@ class TrajectoryInbox {
     const auto end = motion::evaluate(s, s.start_us + s.duration_us);
     if (!start || !end) return {AdmissionCode::Invalid};
     if (s.start_us != tail_time_ || !continuous(*start, tail_)) return {AdmissionCode::Discontinuous};
+
+    // Validation is bounded but not instantaneous. Recheck real time before commit.
+    const TimeUs commit_time = clock.now_us();
+    service(commit_time);
+    if (gate_.state() == ExecutionState::Faulted) return {AdmissionCode::Faulted};
+    if (!permitted() || !have_tail_) return {AdmissionCode::NotReady};
+    if (request.expires_us <= commit_time || s.start_us <= commit_time) return {AdmissionCode::Expired};
 
     // Transaction commit: no callbacks, I/O, allocation, yield or possible capacity failure.
     queue_[(head_ + size_) % QueueCapacity] = request;

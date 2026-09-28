@@ -3,7 +3,12 @@
 using namespace helix;
 using namespace helix::motion;
 using namespace helix::protocol;
+class DemoClock final : public MonotonicClock {
+ public:
+  TimeUs now_us() const noexcept override { return 0; }
+};
 int main() {
+  const DemoClock clock;
   // Synthetic host-only fixture. None of these values is Helix calibration.
   InboxConfig c{};
   for (auto& axis : c.limits) axis = {-10, 10, 10, 10, 10};
@@ -25,8 +30,8 @@ int main() {
       segment.control_rad[3][axis] = state.q[axis] + state.v[axis]*t + state.a[axis]*t*t/2 + jerk*t*t*t/6;
     }
     const TrajectoryRequest command{1, *key, sequence, 42, segment.start_us, segment};
-    if (inbox.submit(command, 0).code != AdmissionCode::Accepted) return 2;
-    if (inbox.submit(command, 0).code != AdmissionCode::Duplicate || inbox.queued() != 1) return 3;
+    if (inbox.submit(command, clock).code != AdmissionCode::Accepted) return 2;
+    if (inbox.submit(command, clock).code != AdmissionCode::Duplicate || inbox.queued() != 1) return 3;
     if (!inbox.take_for_preparation(0)) return 4;
     const auto end = evaluate(segment, segment.start_us+segment.duration_us);
     if (!end) return 5;

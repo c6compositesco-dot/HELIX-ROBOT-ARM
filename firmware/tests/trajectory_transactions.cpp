@@ -21,6 +21,21 @@ void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 using namespace helix;
 using namespace helix::motion;
 using namespace helix::protocol;
+class FixedClock final : public MonotonicClock {
+ public:
+  explicit FixedClock(TimeUs now) : now_(now) {}
+  TimeUs now_us() const noexcept override { return now_; }
+ private:
+  TimeUs now_;
+};
+class AdvancingClock final : public MonotonicClock {
+ public:
+  AdvancingClock(TimeUs before, TimeUs after) : before_(before), after_(after) {}
+  TimeUs now_us() const noexcept override { return calls_++ == 0 ? before_ : after_; }
+ private:
+  TimeUs before_, after_;
+  mutable unsigned calls_{0};
+};
 static std::size_t checks = 0;
 static void check(bool passed, const char* text, int line) {
   ++checks;
@@ -126,78 +141,78 @@ static void transactions_suite() {
   CHECK(std::abs(evaluate(s4, 2000000)->v[0]) < 1e-14);
   CHECK(std::abs(evaluate(s4, 2000000)->a[0]) < 1e-14);
   auto one = request(*key, 1, s1); auto two = request(*key, 2, s2);
-  CHECK(inbox.submit(one, 0).code == AdmissionCode::NotReady);
+  CHECK(inbox.submit(one, FixedClock{0}).code == AdmissionCode::NotReady);
   CHECK(inbox.arm(*key, {}, 1000000, {}, 0) == Status::NotReady);
   CHECK(inbox.arm(*key, qualified(), 1000000, {}, 0) == Status::Ok);
   auto bad = one; bad.segment.control_rad[3][0] = 100;
-  CHECK(inbox.submit(bad, 0).code == AdmissionCode::CurveRejected);
+  CHECK(inbox.submit(bad, FixedClock{0}).code == AdmissionCode::CurveRejected);
   CHECK(inbox.queued() == 0);
-  CHECK(inbox.submit(one, 0).code == AdmissionCode::Accepted); // Rejection did not consume ID.
-  CHECK(inbox.submit(one, 1).code == AdmissionCode::Duplicate && inbox.queued() == 1);
+  CHECK(inbox.submit(one, FixedClock{0}).code == AdmissionCode::Accepted); // Rejection did not consume ID.
+  CHECK(inbox.submit(one, FixedClock{1}).code == AdmissionCode::Duplicate && inbox.queued() == 1);
   bad = one; bad.expires_us -= 1;
-  CHECK(inbox.submit(bad, 1).code == AdmissionCode::Conflict);
+  CHECK(inbox.submit(bad, FixedClock{1}).code == AdmissionCode::Conflict);
   bad = one; bad.segment.control_rad[2][2] += 0.1;
-  CHECK(inbox.submit(bad, 1).code == AdmissionCode::Conflict);
-  CHECK(inbox.submit(two, 1).code == AdmissionCode::Full);
+  CHECK(inbox.submit(bad, FixedClock{1}).code == AdmissionCode::Conflict);
+  CHECK(inbox.submit(two, FixedClock{1}).code == AdmissionCode::Full);
   CHECK(inbox.take_for_preparation(1)->sequence == 1);
-  CHECK(inbox.submit(one, 1).delivery == Delivery::Prepared);
-  CHECK(inbox.submit(two, 1).code == AdmissionCode::Accepted); // Full did not consume ID or tail.
+  CHECK(inbox.submit(one, FixedClock{1}).delivery == Delivery::Prepared);
+  CHECK(inbox.submit(two, FixedClock{1}).code == AdmissionCode::Accepted); // Full did not consume ID or tail.
   CHECK(inbox.queued() == 1);
   CHECK(inbox.take_for_preparation(1)->sequence == 2);
   auto three = request(*key, 3, s3);
   bad = three; bad.segment.start_us += 1;
-  CHECK(inbox.submit(bad, 1).code == AdmissionCode::Discontinuous);
+  CHECK(inbox.submit(bad, FixedClock{1}).code == AdmissionCode::Discontinuous);
   bad = three; for (auto& p : bad.segment.control_rad) p[0] += 0.01;
-  CHECK(inbox.submit(bad, 1).code == AdmissionCode::Discontinuous);
+  CHECK(inbox.submit(bad, FixedClock{1}).code == AdmissionCode::Discontinuous);
   bad = three; bad.segment.control_rad[1][0] += 0.0001;
-  CHECK(inbox.submit(bad, 1).code == AdmissionCode::Discontinuous);
+  CHECK(inbox.submit(bad, FixedClock{1}).code == AdmissionCode::Discontinuous);
   bad = three; bad.segment.control_rad[2][0] += 0.0001;
-  CHECK(inbox.submit(bad, 1).code == AdmissionCode::Discontinuous);
-  CHECK(inbox.submit(three, 1).code == AdmissionCode::Accepted);
-  CHECK(inbox.submit(one, 1).code == AdmissionCode::OutcomeUnknown); // Receipt evicted, never replayed.
+  CHECK(inbox.submit(bad, FixedClock{1}).code == AdmissionCode::Discontinuous);
+  CHECK(inbox.submit(three, FixedClock{1}).code == AdmissionCode::Accepted);
+  CHECK(inbox.submit(one, FixedClock{1}).code == AdmissionCode::OutcomeUnknown); // Receipt evicted, never replayed.
   CHECK(inbox.take_for_preparation(1)->sequence == 3);
-  auto four = request(*key, 4, s4); CHECK(inbox.submit(four, 1).code == AdmissionCode::Accepted);
+  auto four = request(*key, 4, s4); CHECK(inbox.submit(four, FixedClock{1}).code == AdmissionCode::Accepted);
   inbox.trip(Fault::Interlock);
   CHECK(inbox.state() == ExecutionState::Faulted && inbox.queued() == 0);
   CHECK(!inbox.take_for_preparation(2));
-  CHECK(inbox.submit(four, 2).delivery == Delivery::Cancelled);
-  CHECK(inbox.submit(three, 2).delivery == Delivery::OutcomeUnknown);
+  CHECK(inbox.submit(four, FixedClock{2}).delivery == Delivery::Cancelled);
+  CHECK(inbox.submit(three, FixedClock{2}).delivery == Delivery::OutcomeUnknown);
   CHECK(inbox.acknowledge_fault(false) == Status::NotReady);
   CHECK(inbox.acknowledge_fault(true) == Status::Ok);
   CHECK(inbox.state() == ExecutionState::Disarmed);
   CHECK(inbox.arm(*key, qualified(), 3000000, {}, 3) == Status::NotReady);
-  CHECK(inbox.submit(four, 2000001).code == AdmissionCode::Duplicate); // Historical receipt, not expiry revival.
+  CHECK(inbox.submit(four, FixedClock{2000001}).code == AdmissionCode::Duplicate); // Historical receipt, not expiry revival.
   auto next_key = inbox.new_session(42, 2000001); CHECK(next_key && next_key->session > key->session);
-  CHECK(inbox.submit(one, 2000001).code == AdmissionCode::OldSession);
+  CHECK(inbox.submit(one, FixedClock{2000001}).code == AdmissionCode::OldSession);
   CHECK(inbox.state() == ExecutionState::Disarmed);
 
   TrajectoryInbox<1, 2> limits(91, c); key = limits.new_session(42, 0);
   CHECK(limits.arm(*key, qualified(), 1000000, {}, 0) == Status::Ok);
   one = request(*key, 1, s1);
-  bad = one; bad.sequence = 0; CHECK(limits.submit(bad, 0).code == AdmissionCode::Invalid);
-  bad = one; bad.version = 2; CHECK(limits.submit(bad, 0).code == AdmissionCode::Unsupported);
-  bad = one; bad.model_revision = 43; CHECK(limits.submit(bad, 0).code == AdmissionCode::ModelMismatch);
-  bad = one; bad.owner.boot = 92; CHECK(limits.submit(bad, 0).code == AdmissionCode::OldSession);
-  bad = one; bad.expires_us = 0; CHECK(limits.submit(bad, 0).code == AdmissionCode::Expired);
-  bad = one; bad.expires_us = bad.segment.start_us+1; CHECK(limits.submit(bad, 0).code == AdmissionCode::OutsideHorizon);
+  bad = one; bad.sequence = 0; CHECK(limits.submit(bad, FixedClock{0}).code == AdmissionCode::Invalid);
+  bad = one; bad.version = 2; CHECK(limits.submit(bad, FixedClock{0}).code == AdmissionCode::Unsupported);
+  bad = one; bad.model_revision = 43; CHECK(limits.submit(bad, FixedClock{0}).code == AdmissionCode::ModelMismatch);
+  bad = one; bad.owner.boot = 92; CHECK(limits.submit(bad, FixedClock{0}).code == AdmissionCode::OldSession);
+  bad = one; bad.expires_us = 0; CHECK(limits.submit(bad, FixedClock{0}).code == AdmissionCode::Expired);
+  bad = one; bad.expires_us = bad.segment.start_us+1; CHECK(limits.submit(bad, FixedClock{0}).code == AdmissionCode::OutsideHorizon);
   bad = one; bad.segment.start_us = c.max_future_us;
-  CHECK(limits.submit(bad, 0).code == AdmissionCode::OutsideHorizon);
-  bad = one; bad.segment.format = 99; CHECK(limits.submit(bad, 0).code == AdmissionCode::Unsupported);
-  CHECK(limits.submit(one, 0).code == AdmissionCode::Accepted);
+  CHECK(limits.submit(bad, FixedClock{0}).code == AdmissionCode::OutsideHorizon);
+  bad = one; bad.segment.format = 99; CHECK(limits.submit(bad, FixedClock{0}).code == AdmissionCode::Unsupported);
+  CHECK(limits.submit(one, FixedClock{0}).code == AdmissionCode::Accepted);
   limits.disarm(0); CHECK(limits.queued() == 0 && limits.state() == ExecutionState::Disarmed);
   CHECK(limits.arm(*key, qualified(), 1000000, {}, 1) == Status::NotReady);
-  CHECK(limits.submit(one, 1).delivery == Delivery::Cancelled);
+  CHECK(limits.submit(one, FixedClock{1}).delivery == Delivery::Cancelled);
 
   auto short_lease = c; short_lease.lease_us = 100;
   TrajectoryInbox<1, 2> lease(91, short_lease); key = lease.new_session(42, 0);
   CHECK(lease.arm(*key, qualified(), 1000000, {}, 0) == Status::Ok);
-  one = request(*key, 1, s1); CHECK(lease.submit(one, 0).code == AdmissionCode::Accepted);
+  one = request(*key, 1, s1); CHECK(lease.submit(one, FixedClock{0}).code == AdmissionCode::Accepted);
   CHECK(lease.heartbeat(*key, 1, 1000, 10) == Status::Ok);
   CHECK(lease.heartbeat(*key, 1, 1000, 90) == Status::Stale); // Replay cannot extend lease.
-  bad = one; bad.version = 2; CHECK(lease.submit(bad, 109).code == AdmissionCode::Unsupported);
+  bad = one; bad.version = 2; CHECK(lease.submit(bad, FixedClock{109}).code == AdmissionCode::Unsupported);
   CHECK(lease.heartbeat(*key, 2, 1000, 110) == Status::NotReady);
   CHECK(lease.fault() == Fault::CommunicationsLost && lease.queued() == 0);
-  CHECK(lease.submit(one, 111).delivery == Delivery::Cancelled);
+  CHECK(lease.submit(one, FixedClock{111}).delivery == Delivery::Cancelled);
   CHECK(lease.new_session(42, 111)); CHECK(lease.state() == ExecutionState::Faulted);
 
   TrajectoryInbox<1, 2> regressed(91, c); key = regressed.new_session(42, 0);
@@ -205,7 +220,7 @@ static void transactions_suite() {
   regressed.service(20); regressed.service(19); CHECK(regressed.fault() == Fault::ClockRegression);
   TrajectoryInbox<1, 2> late(91, c); key = late.new_session(42, 0);
   CHECK(late.arm(*key, qualified(), 1000000, {}, 0) == Status::Ok);
-  CHECK(late.submit(request(*key, 1, s1), 0).code == AdmissionCode::Accepted);
+  CHECK(late.submit(request(*key, 1, s1), FixedClock{0}).code == AdmissionCode::Accepted);
   CHECK(!late.take_for_preparation(1000001)); CHECK(late.fault() == Fault::MotionDeadline);
 
   TrajectoryInbox<1, 2> invalid_config(91, {}); CHECK(!invalid_config.new_session(42, 0));
@@ -223,6 +238,31 @@ static void transactions_suite() {
   CHECK(transfer.new_session(42, 100));
   CHECK(transfer.fault() == Fault::CommunicationsLost);
 
+  // Expiry, motion deadline and lease must be rechecked AFTER expensive validation.
+  TrajectoryInbox<1, 2> expired_during_check(91, c); key = expired_during_check.new_session(42, 0);
+  CHECK(expired_during_check.arm(*key, qualified(), 1000000, {}, 0) == Status::Ok);
+  one = request(*key, 1, s1); one.expires_us = 100;
+  AdvancingClock expiry_clock(0, 101);
+  CHECK(expired_during_check.submit(one, expiry_clock).code == AdmissionCode::Expired);
+  CHECK(expired_during_check.queued() == 0);
+  one.expires_us = 1000000;
+  CHECK(expired_during_check.submit(one, FixedClock{102}).code == AdmissionCode::Accepted);
+  TrajectoryInbox<1, 2> lease_during_check(91, short_lease); key = lease_during_check.new_session(42, 0);
+  CHECK(lease_during_check.arm(*key, qualified(), 1000000, {}, 0) == Status::Ok);
+  AdvancingClock lease_clock(0, 100);
+  CHECK(lease_during_check.submit(request(*key, 1, s1), lease_clock).code == AdmissionCode::Faulted);
+  CHECK(lease_during_check.fault() == Fault::CommunicationsLost && lease_during_check.queued() == 0);
+  TrajectoryInbox<1, 2> backwards_during_check(91, c); key = backwards_during_check.new_session(42, 0);
+  CHECK(backwards_during_check.arm(*key, qualified(), 1000000, {}, 0) == Status::Ok);
+  AdvancingClock backwards_clock(10, 9);
+  CHECK(backwards_during_check.submit(request(*key, 1, s1), backwards_clock).code == AdmissionCode::Faulted);
+  CHECK(backwards_during_check.fault() == Fault::ClockRegression);
+  TrajectoryInbox<1, 2> late_during_check(91, c); key = late_during_check.new_session(42, 0);
+  CHECK(late_during_check.arm(*key, qualified(), 1000000, {}, 0) == Status::Ok);
+  AdvancingClock late_clock(0, 1000000);
+  CHECK(late_during_check.submit(request(*key, 1, s1), late_clock).code == AdmissionCode::Expired);
+  CHECK(late_during_check.queued() == 0);
+
   // Repeated ring wrap, discarded acknowledgements, and out-of-window replay.
   TrajectoryInbox<2, 4> ring(91, c); key = ring.new_session(42, 0);
   CHECK(ring.arm(*key, qualified(), 1000000, {}, 0) == Status::Ok);
@@ -230,23 +270,23 @@ static void transactions_suite() {
     auto hold = curve(0, 0, 0, 0); hold.duration_us = 1000;
     hold.start_us = 1000000 + (seq-1)*1000;
     const auto cmd = request(*key, seq, hold);
-    CHECK(ring.submit(cmd, 0).code == AdmissionCode::Accepted);
-    CHECK(ring.submit(cmd, 0).code == AdmissionCode::Duplicate);
+    CHECK(ring.submit(cmd, FixedClock{0}).code == AdmissionCode::Accepted);
+    CHECK(ring.submit(cmd, FixedClock{0}).code == AdmissionCode::Duplicate);
     CHECK(ring.queued() == 1);
     CHECK(ring.take_for_preparation(0)->sequence == seq);
-    CHECK(ring.submit(cmd, 0).delivery == Delivery::Prepared);
+    CHECK(ring.submit(cmd, FixedClock{0}).delivery == Delivery::Prepared);
   }
   auto hold = curve(0, 0, 0, 0); hold.start_us = 1512000; hold.duration_us = 1000;
-  CHECK(ring.submit(request(*key, std::numeric_limits<std::uint64_t>::max(), hold), 0).code == AdmissionCode::Accepted);
-  CHECK(ring.submit(request(*key, 1, hold), 0).code == AdmissionCode::OutcomeUnknown);
-  CHECK(ring.submit(request(*key, 0, hold), 0).code == AdmissionCode::Invalid);
+  CHECK(ring.submit(request(*key, std::numeric_limits<std::uint64_t>::max(), hold), FixedClock{0}).code == AdmissionCode::Accepted);
+  CHECK(ring.submit(request(*key, 1, hold), FixedClock{0}).code == AdmissionCode::OutcomeUnknown);
+  CHECK(ring.submit(request(*key, 0, hold), FixedClock{0}).code == AdmissionCode::Invalid);
   ring.trip(Fault::None); CHECK(ring.queued() == 1);
 
   // Fixed-storage paths must not call C++ allocation on the tested host.
   allocation_forbidden = true;
   TrajectoryInbox<2, 4> no_heap(99, c); const auto nk = no_heap.new_session(42, 0);
   CHECK(no_heap.arm(*nk, qualified(), 1000000, {}, 0) == Status::Ok);
-  CHECK(no_heap.submit(request(*nk, 1, s1), 0).code == AdmissionCode::Accepted);
+  CHECK(no_heap.submit(request(*nk, 1, s1), FixedClock{0}).code == AdmissionCode::Accepted);
   CHECK(no_heap.take_for_preparation(0)); no_heap.trip(Fault::Drive);
   allocation_forbidden = false;
 }
