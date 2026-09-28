@@ -3,7 +3,7 @@
 
 namespace helix {
 enum class ExecutionState { Disarmed, Armed, Running, Faulted };
-enum class Fault { None, CommunicationsLost, ClockRegression, Interlock, Feedback, Drive };
+enum class Fault { None, CommunicationsLost, ClockRegression, Interlock, Feedback, Drive, MotionDeadline };
 struct ArmChecks {
   bool board_qualified{false};
   bool model_valid{false};

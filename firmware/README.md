@@ -1,29 +1,31 @@
 # Helix firmware foundation
 
-**Host-testable setup, not runnable robot firmware. No hardware image is produced.** The existing root `firmware.bin`, root README and licence are untouched. Its corresponding source is not established by this work.
+**Host-testable control code, not runnable robot firmware. No hardware image is produced.** The existing root `firmware.bin`, root README and licence are untouched. Its corresponding source is not established by this work.
 
-Our portable robot-control core targets the Octopus Pro as the retained central controller. Drive and feedback adapters allow open-loop steps, motor sensing, networked drives, joint-output sensing and later suitable brushless drives without changing task-level joint semantics. This is an architecture contract, not hardware compatibility certification.
+Our portable robot-control core retains the Octopus Pro as central controller. Drive and feedback adapters support the planned progression from open-loop steps to motor sensing, networked drives, joint-output sensing and external brushless drives. This is an architecture target, not hardware certification.
+
+## Implemented next slice
+
+[Continuous trajectory validation and transactional admission](docs/TRAJECTORY_ADMISSION.md) now provides a six-axis cubic/constant-jerk representation, a bounded conservative continuous-limit validator, an evaluator and a fixed-storage transactional inbox. Failed/full submissions do not consume command IDs; retained duplicates do not enqueue twice. Session changes, lease expiry and faults invalidate pending work without claiming a physical stop. A host-only four-segment demo exercises the path.
 
 ## Requirements and researched design
 
-Start with the [complete requirements baseline](docs/requirements/README.md), [methods and alternatives](docs/requirements/METHODS.md), [implementation gaps](docs/requirements/INTEGRATION_GAPS.md) and [qualification plan](docs/requirements/QUALIFICATION.md). Every requirement has an ID, phase, owning issue and acceptance procedure. [Sources](docs/requirements/sources.json) distinguish evidence from limitations; [parameters](docs/requirements/parameters.json) distinguish study targets from unresolved measurements. Requirements are not claims that the features below are implemented.
-
-Run `python3 firmware/tools/check_requirements.py` to check structure/references, or add `--export /tmp/helix-requirements.json` for a machine-readable registry. The checker has its own negative tests and CI job; it cannot certify firmware behavior or physical safety.
+Start with the [requirements baseline](docs/requirements/README.md), [methods and alternatives](docs/requirements/METHODS.md), [implementation gaps](docs/requirements/INTEGRATION_GAPS.md) and [qualification plan](docs/requirements/QUALIFICATION.md). Each requirement has an ID, phase, owning issue and acceptance procedure. [Sources](docs/requirements/sources.json) identify evidence and limitations; [parameters](docs/requirements/parameters.json) separate study targets from measurements. Specification is not implementation evidence.
 
 ## Sections and present status
 
-| Section | Present in this revision | Not yet implemented |
+| Section | Present | Remaining |
 |---|---|---|
-| `include/helix/core`, `joints` | SI-unit types, fixed-ratio mapping with invalid/overflow rejection | Real robot geometry/calibration, coupled transmissions |
-| `include/helix/feedback` | Separate estimate/motor/output samples, validity and age checks | Sensor acquisition and correction loops |
-| `include/helix/motion` | Fixed-capacity, single-owner waypoint queue and point checks | Interpolation, whole-segment limits, stopping horizon, pulse output |
-| `include/helix/runtime` | Disarmed-by-default permission state, latched faults, watchdog model | Physical stop execution, homing and complete runtime wiring |
-| `include/helix/drives`, `drivers` | Capability checks and explicit unavailable adapter | STEP/DIR, encoder and vendor servo adapters |
-| `include/helix/kinematics` | Bounded request/result interface, unavailable solver | FK, Jacobian, DLS, target-hardware timing qualification |
-| `include/helix/protocol`, `transport` | Version/session/sequence/model/expiry admission | USB/CAN drivers, binary codec, synchronization |
-| `include/helix/tasks` | Bounded program-description validation | Interpreter, tool and sensor bindings |
-| `boards/octopus_pro_v1_1` | Audit checklist, blocked board-image build | Verified BSP, startup/linker/HAL/pin mapping |
-| `tests`, GitHub Actions | Eight host contract suites, GCC/Clang, optional ASan/UBSan | MCU timing and hardware-in-the-loop evidence |
+| `core`, `joints` | SI-unit types and checked fixed-ratio mapping | Real geometry, calibration and coupled transmissions |
+| `feedback` | Separate estimate/motor/output samples with validity/age checks | Acquisition, plausibility and correction loops |
+| `motion` | Point queue; cubic evaluation and continuous position/velocity/acceleration/jerk certification | Timed playback, stop horizon, pulse output and collision/quantization margins |
+| `runtime` | Permission state, fault latch and lease model | Live interlocks, physical stopping/support and homing |
+| `drives` | Capability checks and explicitly unavailable adapters | Qualified STEP/DIR, network and servo backends |
+| `kinematics` | Bounded request/result interface and unavailable solver | Actual FK/Jacobian/IK and MCU timing |
+| `protocol` | Single-owner trajectory transaction, receipt window, session/lease integration | Wire codec, USB/CAN, authentication and clock mapping |
+| `tasks` | Bounded program-description syntax | Interpreter, tools and sensor bindings |
+| `boards/octopus_pro_v1_1` | Audit checklist and blocked board image | Verified BSP, startup/linker/clocks/pins/peripherals |
+| Tests/CI | Eight original suites plus five new test entries on GCC/Clang | Hardware timing, electrical and physical qualification |
 
 ## Run on a development computer
 
@@ -31,10 +33,11 @@ Run `python3 firmware/tools/check_requirements.py` to check structure/references
 cmake -S firmware -B firmware/build -DCMAKE_BUILD_TYPE=Debug
 cmake --build firmware/build --parallel
 ctest --test-dir firmware/build --output-on-failure
+./firmware/build/helix_admission_demo
 python3 -m unittest discover -s firmware/tools -p test_requirements_checker.py -v
 python3 firmware/tools/check_requirements.py
 ```
 
-Sanitizers: add `-DHELIX_SANITIZERS=ON` with GCC/Clang. Tests use synthetic fixtures, never real joint calibration. Tests use checks that remain enabled in Release builds. The header-only core has fixed-capacity storage and no explicit dynamic allocation, exceptions or RTTI; this does not establish a worst-case MCU execution bound.
+Add `-DHELIX_SANITIZERS=ON` for GCC/Clang. Fixtures are synthetic, not machine settings. Assertions remain enabled in Release. The trajectory validator requires strict binary64 arithmetic with gradual underflow; the Octopus floating-point configuration and loaded timing are unverified.
 
-See [implementation gates](docs/IMPLEMENTATION.md) and [contributor rules](AGENTS.md). No supported path arms physical hardware in this revision. Do not flash the old binary as though this branch rebuilt it.
+See [implementation gates](docs/IMPLEMENTATION.md) and [contributor rules](AGENTS.md). No supported path enables physical hardware in this revision. Do not treat a passing host demo as permission to flash or drive the arm.
