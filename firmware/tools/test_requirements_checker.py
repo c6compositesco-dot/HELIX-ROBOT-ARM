@@ -52,6 +52,12 @@ class CheckerTests(unittest.TestCase):
     def test_source_range(self):
         self.mutate('[S01]', '[S01-S03]')
         self.assertTrue(any('S02' in e for e in self.run_audit()[1]))
+    def test_comma_separated_sources(self):
+        self.mutate('[S01]', '[S01, S99]')
+        self.assertTrue(any('S99' in e for e in self.run_audit()[1]))
+    def test_reversed_source_range(self):
+        self.mutate('[S01]', '[S03-S01]')
+        self.assertTrue(any('reversed source range' in e for e in self.run_audit()[1]))
     def test_unknown_parameter(self):
         self.mutate('P-TICK', 'P-MISSING')
         self.assertTrue(self.run_audit()[1])

@@ -13,7 +13,7 @@ DOMAINS = {'SYS', 'MOD', 'CAL', 'BSP', 'RT', 'IK', 'MOT', 'STEP', 'SAFE',
            'PWR', 'FB', 'DRV', 'API', 'BUS', 'TASK', 'TOOL', 'SIM', 'OBS', 'REL', 'SEC'}
 HEAD = re.compile(r'^### ([A-Z]{2,5}-[0-9]{3}): (.+)$', re.M)
 META = re.compile(r'^Phase: ([^;\n]+); Issue: #([0-9]+); Origin: (user|derived)$', re.M)
-SOURCE = re.compile(r'\[S([0-9]{2})(?:-S([0-9]{2}))?\]')
+SOURCE = re.compile(r'(?<![A-Za-z0-9])S([0-9]{2})(?:-S([0-9]{2}))?(?![0-9])')
 PARAM = re.compile(r'\bP-[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*\b')
 LINK = re.compile(r'\[[^\]\n]*\]\(([^)\s]+)\)')
 

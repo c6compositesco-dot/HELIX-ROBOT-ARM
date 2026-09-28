@@ -22,7 +22,7 @@ IK-Geo classifies all-revolute chains into geometry-dependent subproblems; favor
 
 ### IK-011: Geometry-specialized solver comparison
 Phase: R1-IK; Issue: #4; Origin: derived
-Requirement: After canonical geometry is available, evaluate applicable analytical/subproblem methods against the bounded numerical baseline using the same calibrated-model corpus, limits, continuity and target hardware budgets. Select by measured suitability, not published desktop headline speed.
+Requirement: Once canonical geometry is available, the solver qualification shall compare applicable analytical/subproblem methods against the bounded numerical baseline using the same calibrated-model corpus, limits, continuity and target hardware budgets. Selection shall use measured suitability, not published desktop headline speed.
 Acceptance: Record geometry eligibility, residuals, all-candidate/branch handling, failure cases, memory and loaded-MCU timing; an alternative is enabled only after the shared solver conformance gates pass.
 
 ## Decisions deliberately deferred
