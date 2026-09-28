@@ -1,6 +1,6 @@
 # Helix firmware foundation
 
-**Host-testable control code, not runnable robot firmware. No hardware image is produced.** The existing root `firmware.bin`, root README and licence are untouched. Its corresponding source is not established by this work.
+**Host-testable control code, not runnable robot firmware. No hardware image is produced.** The existing root `firmware.bin` and licence are untouched. The binary's corresponding source is not established by this work. The [root overview](../README.md) records the current product stage and unverified performance targets.
 
 Our portable robot-control core retains the Octopus Pro as central controller. Drive and feedback adapters support the planned progression from open-loop steps to motor sensing, networked drives, joint-output sensing and external brushless drives. This is an architecture target, not hardware certification.
 

@@ -1,53 +1,60 @@
-# HELIX Robot Arm
+# Helix Robot Arm
 
-> 3D-printed, belt-driven 6-axis arm targeting **2 kg payload** and **≤0.2 mm repeatability** for **<$400 USD**.
+Helix is C6's six-axis, printed-structure, belt-driven robot-arm project. The first intended task is repeatable camera motion and product filming for makers and creators who are willing to build and calibrate their equipment.
 
-![hero](docs/hero.gif)
+**Development stage, 28 September 2026:** individual-joint testing and assembly. A coordinated camera task, independent customer build, payload rating and repeatability figure have not yet been qualified. The first customer release is not ready. This repository is a control-software development workspace, not a complete build kit or a supported hardware-flashing package.
 
-## Specs
-| Metric | Target | Notes |
+## What is available here
+
+| Component | Current evidence | Not yet established |
 |---|---|---|
-| Reach | ___ mm | J2/J3 geometry |
-| Payload | 2 kg | at ___ mm reach |
-| Repeatability | ≤0.2 mm | ISO 9283 method, see Tests |
-| Max speed | ___ °/s | joint-limited |
-| Controller | ___ | firmware ___ |
-| Cost (BOM) | <$400 | v0.1 bill below |
+| Portable C++17 control core | Fixed-size six-joint types, transmission checks, permission/fault model and explicit unsupported adapters | Calibrated machine configuration and physical execution |
+| Continuous trajectory validation | Host-tested cubic evaluation and conservative position/velocity/acceleration/jerk bounds | Collision clearance, physical tracking and target numeric/timing qualification |
+| Transactional trajectory inbox | Host-tested ownership, sequence/receipt handling, preparation deadlines and live prepared-request authorization | Wire transport, concurrent runtime integration, pulse output and stopping/holding |
+| Kinematics, feedback and drives | Interfaces and capability/validity checks | Operational IK solver, acquired encoder measurements and qualified hardware backends |
+| Requirements | 153 staged requirements with owning issues, acceptance procedures and unresolved parameters | Evidence that every requirement has been implemented or accepted |
+| Original root `firmware.bin` | Preserved historical binary | Its corresponding source/configuration and a verified recovery/flash procedure |
 
-## Status & Roadmap
-Alpha. Next: J2/J3 gearbox rev, encoder option, auto-cal.  
-- [ ] v0.1 motion demo  
-- [ ] v0.2 encoder on pulleys  
-- [ ] v1.0 kit & docs
+Start with the [firmware overview](firmware/README.md), [trajectory/admission behavior](firmware/docs/TRAJECTORY_ADMISSION.md), [prepared-motion boundaries](firmware/docs/PREPARED_MOTION.md) and [implementation gaps](firmware/docs/requirements/INTEGRATION_GAPS.md). Host checks do not demonstrate physical motion or safety.
 
-## Bill of Materials
-See [`docs/bom.csv`](docs/bom.csv). Highlight: NEMA __, belts GT2 6 mm (lengths ___, ___), bearings ___, rails ___.
+## Run the host checks
 
-## Print & Assembly
-- Material: ___ (critical parts: ___), infill ___%, walls ___
-- No supports on ___; press-fit tolerances: shaft +0.02 / bore −0.02
-- Belt lengths & routing diagrams: `docs/assembly.md`
+Use a C++17 compiler, CMake and Python. These commands build desktop test programs only:
 
-## Electronics & Firmware
-- Controller: ___ (pinout in `docs/wiring.pdf`)
-- Drivers: ___ microsteps ___
-- Firmware: fork of ___ with **adjustable IK** (`/firmware/`)
+```sh
+cmake -S firmware -B firmware/build -DCMAKE_BUILD_TYPE=Debug
+cmake --build firmware/build --config Debug --parallel
+ctest --test-dir firmware/build -C Debug --output-on-failure
+python3 -m unittest discover -s firmware/tools -p test_requirements_checker.py -v
+python3 firmware/tools/check_requirements.py
+```
 
-## Quickstart
-1. Clone repo; print parts in `stls/`.
-2. Assemble per `docs/assembly.md`.
-3. Wire per `docs/wiring.pdf`.
-4. Flash firmware (`/firmware/README.md`).
-5. Run `examples/first_move.gcode` (or `scripts/first_move.py`).
+Repeat in Release for a code change. GCC/Clang builds support `-DHELIX_SANITIZERS=ON`. Fixtures use synthetic values; their geometry, limits, timing and permissions are not robot settings. The requirements checker verifies specification structure, not implemented or physical behavior.
 
-## Calibration & Tests
-- Belt tension procedure
-- Home offsets / tool-center point
-- Repeatability test (method + CSV + plot in `tests/`)
-- Known issues: belt slip at J2 > __Nm, mitigation ___
+There is no supported command to flash or operate the arm from this revision. The board-image build remains blocked until its required evidence is supplied. Do not use the historical binary as an inferred match for the new core.
 
-## Safety
-Pinch points, high torque, mains isolation. Use at your own risk.
+## First release and performance
 
-## License & Contributing
-License: ___. PRs welcome (see `CONTRIBUTING.md`). FAQ in `docs/faq.md`.
+The [public programme page](https://helix-print-as-you-go.william-thom-6102.chatgpt.site/build) describes the proposed six-release digital build programme and its launch conditions. Customers would separately source components and print/assemble the arm. That offer is not an available hardware kit or a completed release.
+
+An authoritative bill of materials, print/material settings, wiring instructions, calibration procedure and measured camera demonstration are still required. Private mechanical sources and calibration are not included in this public firmware repository.
+
+Earlier README figures of **2 kg payload**, **≤0.2 mm repeatability** and **under US$400** were unverified targets, not measured specifications or a current delivered-price commitment. They must not be used as product performance claims. No payload, reach, speed, repeatability or complete build-cost rating is established here.
+
+## Development gates
+
+1. Preserve the existing machine and recovery information; identify the exact board, driver and mechanical configuration.
+2. Complete host-level behavior and fault tests within the selected R1 scope.
+3. Qualify target clocks, numerical behavior, pulse timing, interfaces and load-support response before powered deployment.
+4. Validate the full camera task and an independent build against dated, configuration-specific measurements.
+5. Release supported files, documentation and operating limits only after those results exist.
+
+The Octopus Pro remains the planned central coordinator. Later feedback, networked drives and onboard IK have separate gates and are not implemented here. Host-planned R1 operation does not depend on onboard IK. Supervisor or AI availability cannot replace local motion limits and fault handling. See the [requirements phases](firmware/docs/requirements/README.md), [qualification plan](firmware/docs/requirements/QUALIFICATION.md) and [contributor rules](firmware/AGENTS.md).
+
+Normal permission revocation is not a physical stopping solution. Stopping, gravity support, power loss and tool retention remain unresolved physical obligations. A passing software test is not permission to remove motor power under load or operate an unqualified arm.
+
+## License and contributions
+
+The repository contains an [MIT license](LICENSE). Preserve its notice. That file does not establish rights to unpublished CAD, third-party assets or the historical binary's unknown source provenance. Keep private geometry, calibration, credentials and commercial documents out of public fixtures.
+
+Contributions should identify the relevant requirement, describe implemented versus unavailable behavior, and include evidence appropriate to the changed scope. Do not close physical qualification work using host tests alone.
