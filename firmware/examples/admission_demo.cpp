@@ -14,6 +14,7 @@ int main() {
   for (auto& axis : c.limits) axis = {-10, 10, 10, 10, 10};
   c.budget = {8, 12264}; c.continuity = {1e-10, 1e-10, 1e-10};
   c.max_future_us = 10000000; c.lease_us = 1000;
+  c.preparation_lead_us = 100; // Synthetic; target worst-case timing remains unqualified.
   TrajectoryInbox<1, 4> inbox(123, c);
   const auto key = inbox.new_session(42, 0);
   if (!key || inbox.arm(*key, {true,true,true,true,true}, 1000000, {}, 0) != Status::Ok) return 1;
