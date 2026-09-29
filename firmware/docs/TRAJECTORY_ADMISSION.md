@@ -8,9 +8,9 @@ A caller establishes a fresh boot/session/model context, supplies a qualified st
 
 1. Service the existing lease/fault model; reject incompatible ownership, version or model.
 2. Resolve retained duplicate receipts without enqueuing again. Reject changed content under the same ID.
-3. Check expiry, bounded scheduling horizon and queue capacity.
+3. Check expiry, bounded scheduling horizon, explicit preparation reserve and queue capacity.
 4. Certify continuous joint position, velocity, acceleration and jerk bounds; check start time and C2 boundary continuity.
-5. Read the injected controller clock again; reject a lease, command or start time that expired during validation.
+5. Read the injected controller clock again; reject a lease, command or preparation deadline that expired during validation.
 6. Commit the complete six-axis request, receipt, sequence and planned tail in fixed storage; return an admission receipt.
 
 Only a single serialized owner may call the inbox. There are no callbacks, waits, allocations or fallible operations inside commit. This is a logical transaction boundary, **not** a CPU-atomic/ISR-safe or crash-persistent transaction. A board port must implement and qualify its producer/consumer exchange separately.
@@ -46,15 +46,31 @@ The receipt window is compile-time bounded and stores the typed request, avoidin
 
 `Queued` means admitted. `Prepared` means removed for a future preparation layer, not executed. On disarm/fault, queued receipts become `Cancelled`; already prepared work becomes `OutcomeUnknown`. There is no physical completion state in this slice. New sessions clear old pending data and do not clear latched faults. A stream may arm only once per session; re-arming after revoked permission requires a new session, so a previous prepared ticket cannot become valid merely because the same owner re-arms.
 
-Submission reads a `MonotonicClock` at entry and again immediately before the non-failing commit. Scripted-clock tests cover expiry and clock regression during validation. The remaining finite commit/preparation lead time still requires a measured target-specific budget.
+Submission reads a `MonotonicClock` at entry and again immediately before the non-failing commit. Scripted-clock tests cover expiry and clock regression during validation. The required `preparation_lead_us` reserve is enforced at both reads; its value still requires a measured target-specific budget.
+
+## Revocable preparation permission and deadlines
+
+`take_for_preparation` returns a typed request used as a preparation ticket. It does not grant durable permission. A consumer must call `check_preparation(ticket, clock)` after expensive preparation and immediately before publishing the result, under the same serialized owner. Only `Status::Ok` permits that preparation handoff. Any other result requires discarding the prepared result and following the runtime's qualified fault/recovery policy. Never cache `Ok`, turn it into an execution permit, or reuse it across concurrent/ISR activity.
+
+The check requires the current boot/session/model, a currently armed gate and an exact retained request with `Prepared` disposition. Every semantic payload field is compared. Queued-but-not-handed-off, modified, cancelled, stale-session and evicted tickets fail closed. Receipt eviction intentionally revokes preparation eligibility, so integrations must size the receipt window and bound outstanding preparation accordingly. The ticket is not a cryptographic capability, a physical completion record or a one-shot execution token. Rechecking it has no execution side effect and does not refresh the lease.
+
+The injected controller clock is read on entry and again after receipt lookup. Lease loss, clock regression and faults revoke permission, including faults occurring during that check. Disarm revokes handed-off tickets; acknowledgement does not re-arm, and re-arming requires a new session. Historical duplicate receipts continue to report disposition without granting permission.
+
+`InboxConfig::preparation_lead_us` is mandatory, positive and smaller than `max_future_us`. A zero/default reserve cannot establish a session. Arming, admission, handoff and preparation checks require `start_us > now` and `start_us - now > preparation_lead_us`. Exactly at the deadline (`start_us - preparation_lead_us`) is too late. Ordered subtraction avoids unsigned overflow. Test/demo values are synthetic, not proposed MCU settings.
+
+`service` also latches `MotionDeadline` when the oldest queued segment misses this deadline, even without a consumer call. A missed deadline for a handed-off ticket is detected by `check_preparation`; this slice does not track preparation completion or detect a stalled worker once all work has left the queue. A qualified runtime must still monitor that worker and retain a validated stopping horizon. The finite interval after the final clock read, publication/concurrency exchange, timed execution and physical stop remain unimplemented and unqualified. The reserve is not proof that any of those operations can finish in time.
+
+`expires_us` remains the deadline for admission, not a new cancellation time after acceptance. Prepared work is instead bounded by its preparation deadline and current revocable permission.
 
 The caller must provision a unique boot identity and route actual controller time; this module does not invent entropy, authentication or a persistent recovery log. Old-boot/session rejection does not establish whether an earlier physical operation happened. No exactly-once guarantee is made across reset, power loss or an external actuator.
 
-Only valid owner health messages with fresh health-sequence numbers and unexpired timestamps refresh the lease. Ordinary commands, duplicates and invalid traffic do not. Lease expiry and clock regression latch faults and invalidate pending data. A preparation request arriving after its scheduled start latches `MotionDeadline` instead of producing catch-up motion. These are software permission changes, not physical stopping.
+Only valid owner health messages with fresh health-sequence numbers and unexpired timestamps refresh the lease. Ordinary commands, duplicates and invalid traffic do not. Lease expiry and clock regression latch faults and invalidate pending data. Missing the preparation deadline latches `MotionDeadline` instead of producing catch-up motion. These are software permission changes, not physical stopping.
 
 ## Verification and scope
 
 New tests: `trajectory_bounds`, `trajectory_transactions`, `trajectory_properties`, `trajectory_fast_math_guard`, and `trajectory_demo`. The original eight contract suites remain.
+
+The September 29 continuation adds `trajectory_preparation`, bringing the CTest suite to 14 entries. It covers exact request identity, unprepared/evicted tickets, disarm and new-session revocation, fault acknowledgement without revival, lease expiry without check-based renewal, clock regression, reserve boundaries, admission/check-time overruns, required configuration, unsigned time boundaries and a scoped allocation trap. The demo now checks preparation permission after computing its synthetic result.
 
 The three new C++ suites execute 432823 checks per configuration, mostly deterministic property-sample assertions, **not 432823 independent scenarios**. They cover invalid inputs, each dynamic limit, legal endpoints with illegal interiors, conservative uncertainty, 512 queue/receipt wraps, retry/changed-ID behavior, receipt eviction, session changes, sequence exhaustion, continuity, deadlines and fault cancellation. The deterministic property corpus has 128 curves, with 99 certified and 29 rejected; accepted curves are compared at 101 timestamps on all six axes against an independent explicit long-double polynomial. Sampling is a regression oracle, not the certificate.
 

@@ -123,6 +123,7 @@ static void bounds_suite() {
 static InboxConfig config() {
   InboxConfig c{}; c.limits = envelope(10, 10, 10, 10); c.budget = {8, 12264};
   c.continuity = {1e-10, 1e-10, 1e-10}; c.max_future_us = 10000000; c.lease_us = 5000000;
+  c.preparation_lead_us = 100; // Synthetic reserve; not an MCU timing claim.
   return c;
 }
 static ArmChecks qualified() { return {true, true, true, true, true}; }
@@ -290,6 +291,121 @@ static void transactions_suite() {
   CHECK(no_heap.take_for_preparation(0)); no_heap.trip(Fault::Drive);
   allocation_forbidden = false;
 }
+static void preparation_suite() {
+  const auto c = config();
+  const auto s = from_state(1000000, {}, 1);
+  constexpr TimeUs deadline = 999900; // start - explicit synthetic reserve
+  // A queued request, altered request or evicted receipt is not a valid ticket.
+  TrajectoryInbox<1, 1> inbox(91, c);
+  const auto key = inbox.new_session(42, 0); CHECK(key);
+  CHECK(inbox.arm(*key, qualified(), s.start_us, {}, 0) == Status::Ok);
+  const auto cmd = request(*key, 1, s);
+  CHECK(inbox.check_preparation(cmd, FixedClock{0}) == Status::Stale);
+  CHECK(inbox.submit(cmd, FixedClock{0}).code == AdmissionCode::Accepted);
+  CHECK(inbox.check_preparation(cmd, FixedClock{0}) == Status::Stale);
+  const auto ticket = inbox.take_for_preparation(0); CHECK(ticket);
+  CHECK(inbox.check_preparation(*ticket, FixedClock{1}) == Status::Ok);
+  CHECK(inbox.check_preparation(*ticket, FixedClock{2}) == Status::Ok); // Read-only check, no lease refresh.
+  auto bad = *ticket;
+  bad.owner.boot++; CHECK(inbox.check_preparation(bad, FixedClock{2}) == Status::Stale);
+  bad = *ticket; bad.owner.session++; CHECK(inbox.check_preparation(bad, FixedClock{2}) == Status::Stale);
+  bad = *ticket; bad.model_revision++; CHECK(inbox.check_preparation(bad, FixedClock{2}) == Status::ModelMismatch);
+  bad = *ticket; bad.sequence++; CHECK(inbox.check_preparation(bad, FixedClock{2}) == Status::Stale);
+  bad = *ticket; bad.version++; CHECK(inbox.check_preparation(bad, FixedClock{2}) == Status::Stale);
+  bad = *ticket; bad.expires_us--; CHECK(inbox.check_preparation(bad, FixedClock{2}) == Status::Stale);
+  bad = *ticket; bad.segment.start_us++; CHECK(inbox.check_preparation(bad, FixedClock{2}) == Status::Stale);
+  bad = *ticket; bad.segment.duration_us++; CHECK(inbox.check_preparation(bad, FixedClock{2}) == Status::Stale);
+  bad = *ticket; bad.segment.format++; CHECK(inbox.check_preparation(bad, FixedClock{2}) == Status::Stale);
+  for (std::size_t point = 0; point < 4; ++point) for (std::size_t axis = 0; axis < kJointCount; ++axis) {
+    bad = *ticket; bad.segment.control_rad[point][axis] += 0.01;
+    CHECK(inbox.check_preparation(bad, FixedClock{2}) == Status::Stale);
+  }
+  const auto s2 = from_state(1250000, *evaluate(s, 1250000), -1);
+  CHECK(inbox.submit(request(*key, 2, s2), FixedClock{2}).code == AdmissionCode::Accepted);
+  CHECK(inbox.check_preparation(*ticket, FixedClock{2}) == Status::Stale); // Registry eviction fails closed.
+  CHECK(inbox.queued() == 1 && inbox.state() == ExecutionState::Armed);
+
+  // Stream-wide cancellation revokes handed-off data as well as queued data.
+  const auto second = inbox.take_for_preparation(2); CHECK(second);
+  inbox.disarm(3);
+  CHECK(inbox.check_preparation(*second, FixedClock{3}) == Status::NotReady);
+  CHECK(inbox.submit(*second, FixedClock{3}).delivery == Delivery::OutcomeUnknown);
+  CHECK(inbox.arm(*key, qualified(), 2000000, {}, 3) == Status::NotReady);
+  const auto next = inbox.new_session(43, 3); CHECK(next);
+  CHECK(inbox.arm(*next, qualified(), 2000000, {}, 3) == Status::Ok);
+  CHECK(inbox.check_preparation(*second, FixedClock{3}) == Status::Stale);
+
+  // Just before, exactly at, and just after the reserve boundary.
+  for (TimeUs at : {deadline-1, deadline, deadline+1, TimeUs{1000000}}) {
+    TrajectoryInbox<1, 2> pending(91, c); const auto owner = pending.new_session(42, 0);
+    CHECK(pending.arm(*owner, qualified(), s.start_us, {}, 0) == Status::Ok);
+    CHECK(pending.submit(request(*owner, 1, s), FixedClock{0}).code == AdmissionCode::Accepted);
+    pending.service(at); // No consumer call is needed to detect queued starvation.
+    CHECK((pending.fault() == Fault::None) == (at < deadline));
+    CHECK(static_cast<bool>(pending.take_for_preparation(at)) == (at < deadline));
+    if (at >= deadline) {
+      CHECK(pending.fault() == Fault::MotionDeadline && pending.queued() == 0);
+      CHECK(pending.submit(request(*owner, 1, s), FixedClock{at}).delivery == Delivery::Cancelled);
+    }
+    TrajectoryInbox<1, 2> preparing(91, c); const auto pk = preparing.new_session(42, 0);
+    CHECK(preparing.arm(*pk, qualified(), s.start_us, {}, 0) == Status::Ok);
+    CHECK(preparing.submit(request(*pk, 1, s), FixedClock{0}).code == AdmissionCode::Accepted);
+    const auto prepared = preparing.take_for_preparation(0); CHECK(prepared);
+    CHECK(preparing.check_preparation(*prepared, FixedClock{at}) == (at < deadline ? Status::Ok : Status::Deadline));
+    if (at >= deadline) CHECK(preparing.fault() == Fault::MotionDeadline);
+  }
+
+  // Reserve is checked again after numerical validation and after ticket lookup.
+  TrajectoryInbox<1, 2> validating(91, c); const auto vk = validating.new_session(42, 0);
+  CHECK(validating.arm(*vk, qualified(), s.start_us, {}, 0) == Status::Ok);
+  CHECK(validating.submit(request(*vk, 1, s), AdvancingClock{0, deadline}).code == AdmissionCode::Expired);
+  CHECK(validating.queued() == 0 && validating.state() == ExecutionState::Armed);
+  // The ID was not consumed: retry is still a fresh expired request, not a receipt.
+  CHECK(validating.submit(request(*vk, 1, s), FixedClock{deadline}).code == AdmissionCode::Expired);
+
+  for (unsigned scenario = 0; scenario < 5; ++scenario) {
+    auto cfg = c; if (scenario == 1) cfg.lease_us = 100;
+    TrajectoryInbox<1, 2> checked(91, cfg); const auto ck = checked.new_session(42, 0);
+    CHECK(checked.arm(*ck, qualified(), s.start_us, {}, 0) == Status::Ok);
+    auto checking_cmd = request(*ck, 1, s);
+    if (scenario == 4) checking_cmd.expires_us = 1;
+    CHECK(checked.submit(checking_cmd, FixedClock{0}).code == AdmissionCode::Accepted);
+    const auto held = checked.take_for_preparation(0); CHECK(held);
+    if (scenario == 0) {
+      CHECK(checked.check_preparation(*held, AdvancingClock{0, deadline}) == Status::Deadline);
+      CHECK(checked.fault() == Fault::MotionDeadline);
+    } else if (scenario == 1) {
+      CHECK(checked.check_preparation(*held, FixedClock{99}) == Status::Ok);
+      CHECK(checked.check_preparation(*held, AdvancingClock{99, 100}) == Status::Faulted);
+      CHECK(checked.fault() == Fault::CommunicationsLost); // Checks did not refresh lease.
+    } else if (scenario == 2) {
+      CHECK(checked.check_preparation(*held, AdvancingClock{10, 9}) == Status::Faulted);
+      CHECK(checked.fault() == Fault::ClockRegression);
+    } else if (scenario == 3) {
+      checked.trip(Fault::Interlock);
+      CHECK(checked.check_preparation(*held, FixedClock{0}) == Status::Faulted);
+      CHECK(checked.acknowledge_fault(true) == Status::Ok);
+      CHECK(checked.check_preparation(*held, FixedClock{0}) == Status::NotReady);
+    } else {
+      // Command expiry is admission expiry; successful handoff keeps its original deadline.
+      CHECK(checked.check_preparation(*held, FixedClock{1}) == Status::Ok);
+      allocation_forbidden = true;
+      CHECK(checked.check_preparation(*held, FixedClock{2}) == Status::Ok);
+      checked.disarm(2);
+      CHECK(checked.check_preparation(*held, FixedClock{2}) == Status::NotReady);
+      allocation_forbidden = false;
+    }
+  }
+  auto zero = c; zero.preparation_lead_us = 0; CHECK(!zero.valid());
+  auto excessive = c; excessive.preparation_lead_us = c.max_future_us; CHECK(!excessive.valid());
+  excessive.preparation_lead_us = std::numeric_limits<TimeUs>::max(); CHECK(!excessive.valid());
+  TrajectoryInbox<1, 2> edge(91, c); const auto ek = edge.new_session(42, 0);
+  CHECK(edge.arm(*ek, qualified(), 100, {}, 0) == Status::Invalid);
+  CHECK(edge.arm(*ek, qualified(), 99, {}, 0) == Status::Invalid);
+  const auto maximum = std::numeric_limits<TimeUs>::max();
+  CHECK(edge.arm(*ek, qualified(), maximum, {}, maximum-101) == Status::Ok);
+  CHECK(edge.state() == ExecutionState::Armed); // Subtraction, no overflow from now + reserve.
+}
 static std::uint64_t rng_state = 0x73a56c129edULL;
 static double random_signed() {
   rng_state = rng_state * 6364136223846793005ULL + 1442695040888963407ULL;
@@ -335,6 +451,7 @@ int main(int argc, char** argv) {
   if (argc != 2) return 2;
   if (std::strcmp(argv[1], "trajectory_bounds") == 0) bounds_suite();
   else if (std::strcmp(argv[1], "trajectory_transactions") == 0) transactions_suite();
+  else if (std::strcmp(argv[1], "trajectory_preparation") == 0) preparation_suite();
   else if (std::strcmp(argv[1], "trajectory_properties") == 0) properties_suite();
   else return 2;
   std::printf("PASS %s: %zu checks\n", argv[1], checks);

@@ -35,8 +35,11 @@ struct InboxConfig {
   motion::BoundBudget budget{};
   ContinuityTolerance continuity{};
   TimeUs max_future_us{0}, lease_us{0};
+  // Required reserve AFTER preparation checks, not a stopping horizon. No target default.
+  TimeUs preparation_lead_us{0};
   bool valid() const noexcept {
-    if (!budget.valid() || !continuity.valid() || max_future_us == 0 || lease_us == 0) return false;
+    if (!budget.valid() || !continuity.valid() || max_future_us == 0 || lease_us == 0
+        || preparation_lead_us == 0 || preparation_lead_us >= max_future_us) return false;
     for (const auto& l : limits) if (!l.valid()) return false;
     return true;
   }
@@ -78,7 +81,8 @@ class TrajectoryInbox {
     if (!current(key)) return Status::Stale;
     if (gate_.state() == ExecutionState::Faulted) return Status::Faulted;
     if (arm_used_) return Status::NotReady; // A revoked stream requires a fresh session.
-    if (first_start <= now || first_start - now > config_.max_future_us) return Status::Invalid;
+    if (!preparation_time_available(first_start, now)
+        || first_start - now > config_.max_future_us) return Status::Invalid;
     // This slice admits a new stream only from a caller-qualified stationary reference.
     for (std::size_t i = 0; i < kJointCount; ++i)
       if (!std::isfinite(reference.q[i]) || reference.q[i] < config_.limits[i].lower_rad
@@ -90,6 +94,10 @@ class TrajectoryInbox {
   }
   void service(TimeUs now) noexcept {
     gate_.poll(now);
+    // Detect a missed queued handoff even if the consumer never asks for work.
+    if (permitted() && size_ != 0
+        && !preparation_time_available(queue_[head_].segment.start_us, now))
+      gate_.trip(Fault::MotionDeadline);
     if (gate_.state() == ExecutionState::Faulted) invalidate_pending();
   }
   Status heartbeat(SessionKey key, std::uint64_t sequence, TimeUs expires, TimeUs now) noexcept {
@@ -127,7 +135,8 @@ class TrajectoryInbox {
     if (!permitted() || !have_tail_) return {AdmissionCode::NotReady};
     const auto& s = request.segment;
     if (!motion::valid_shape(s)) return {s.format == 1 ? AdmissionCode::Invalid : AdmissionCode::Unsupported};
-    if (request.expires_us <= now || s.start_us <= now) return {AdmissionCode::Expired};
+    if (request.expires_us <= now || !preparation_time_available(s.start_us, now))
+      return {AdmissionCode::Expired};
     if (request.expires_us > s.start_us || s.start_us + s.duration_us - now > config_.max_future_us)
       return {AdmissionCode::OutsideHorizon};
     if (size_ == QueueCapacity) return {AdmissionCode::Full};
@@ -143,7 +152,8 @@ class TrajectoryInbox {
     service(commit_time);
     if (gate_.state() == ExecutionState::Faulted) return {AdmissionCode::Faulted};
     if (!permitted() || !have_tail_) return {AdmissionCode::NotReady};
-    if (request.expires_us <= commit_time || s.start_us <= commit_time) return {AdmissionCode::Expired};
+    if (request.expires_us <= commit_time || !preparation_time_available(s.start_us, commit_time))
+      return {AdmissionCode::Expired};
 
     // Transaction commit: no callbacks, I/O, allocation, yield or possible capacity failure.
     queue_[(head_ + size_) % QueueCapacity] = request;
@@ -155,21 +165,52 @@ class TrajectoryInbox {
   }
 
   // Handoff to a FUTURE qualified preparation/execution layer, not timed actuation.
-  // A returned request retains its epoch; consumers must recheck permission before use.
+  // A returned request is only a preparation ticket. Consumers MUST call
+  // check_preparation after expensive work and immediately before publishing it.
   std::optional<TrajectoryRequest> take_for_preparation(TimeUs now) noexcept {
     service(now);
     if (!permitted() || size_ == 0) return std::nullopt;
-    if (queue_[head_].segment.start_us < now) { trip(Fault::MotionDeadline); return std::nullopt; }
     const auto request = queue_[head_];
     head_ = (head_ + 1) % QueueCapacity; --size_;
     for (auto& receipt : receipts_) if (receipt.used && receipt.request.sequence == request.sequence)
       receipt.delivery = Delivery::Prepared;
     return request;
   }
+  // Point-in-time preparation permission only, NEVER an execution permit. Same
+  // serialized owner as all other calls; do not cache Ok or share across an ISR.
+  // Retained exact request + Prepared disposition is the bounded ticket registry.
+  // Receipt eviction fails closed, so consumers must finish within that window.
+  Status check_preparation(const TrajectoryRequest& ticket, const MonotonicClock& clock) noexcept {
+    const TimeUs now = clock.now_us();
+    service(now);
+    if (!current(ticket.owner)) return Status::Stale;
+    if (ticket.model_revision != model_) return Status::ModelMismatch;
+    if (gate_.state() == ExecutionState::Faulted) return Status::Faulted;
+    if (!permitted()) return Status::NotReady;
+    for (const auto& receipt : receipts_) {
+      if (!receipt.used || receipt.request.sequence != ticket.sequence) continue;
+      if (receipt.delivery != Delivery::Prepared || !same_request(receipt.request, ticket))
+        return Status::Stale;
+      const TimeUs checked_at = clock.now_us();
+      service(checked_at);
+      if (gate_.state() == ExecutionState::Faulted) return Status::Faulted;
+      if (!permitted()) return Status::NotReady;
+      if (!preparation_time_available(ticket.segment.start_us, checked_at)) {
+        trip(Fault::MotionDeadline);
+        return Status::Deadline;
+      }
+      return Status::Ok;
+    }
+    return Status::Stale;
+  }
   bool current(SessionKey key) const noexcept {
     return active_ && key.boot == boot_ && key.session == session_;
   }
  private:
+  bool preparation_time_available(TimeUs start, TimeUs now) const noexcept {
+    // Subtract only after ordering: no wrap at epoch zero or UINT64_MAX.
+    return start > now && start - now > config_.preparation_lead_us;
+  }
   struct Receipt {
     bool used{false}; TrajectoryRequest request{};
     Delivery delivery{Delivery::None}; motion::BoundReport bounds{};

@@ -14,6 +14,7 @@ int main() {
   for (auto& axis : c.limits) axis = {-10, 10, 10, 10, 10};
   c.budget = {8, 12264}; c.continuity = {1e-10, 1e-10, 1e-10};
   c.max_future_us = 10000000; c.lease_us = 1000;
+  c.preparation_lead_us = 100; // Synthetic reserve, not target qualification.
   TrajectoryInbox<1, 4> inbox(123, c);
   const auto key = inbox.new_session(42, 0);
   if (!key || inbox.arm(*key, {true,true,true,true,true}, 1000000, {}, 0) != Status::Ok) return 1;
@@ -32,11 +33,13 @@ int main() {
     const TrajectoryRequest command{1, *key, sequence, 42, segment.start_us, segment};
     if (inbox.submit(command, clock).code != AdmissionCode::Accepted) return 2;
     if (inbox.submit(command, clock).code != AdmissionCode::Duplicate || inbox.queued() != 1) return 3;
-    if (!inbox.take_for_preparation(0)) return 4;
+    const auto ticket = inbox.take_for_preparation(clock.now_us());
+    if (!ticket) return 4;
     const auto end = evaluate(segment, segment.start_us+segment.duration_us);
     if (!end) return 5;
+    if (inbox.check_preparation(*ticket, clock) != Status::Ok) return 7;
     state = *end;
-    std::printf("Segment %llu: bounds accepted, duplicate suppressed, prepared once\n",
+    std::printf("Segment %llu: bounds accepted, duplicate suppressed, preparation permission rechecked\n",
                 static_cast<unsigned long long>(sequence));
   }
   inbox.service(1000);
