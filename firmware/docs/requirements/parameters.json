@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "deployable": false,
+  "policy": "These are study targets or unresolved commissioning values, never a runnable hardware configuration. No entry is hardware-qualified. Resolve relevant entries and attach evidence before enabling a capability.",
+  "parameters": [
+    {"id":"P-TICK","status":"proposed","value":1000,"unit":"Hz","phase":"R1","issue":3,"acceptance":"Measure worst-case trajectory evaluation plus interrupts/IO/blocking and prove the approved deadline/headroom on the actual target."},
+    {"id":"P-IK","status":"proposed","value":{"update_hz":100,"elapsed_budget_us":2000,"max_iterations":10},"unit":"mixed explicit fields","phase":"R1-IK","issue":4,"acceptance":"Validate convergence corpus, maximum atomic step, total elapsed deadlines and memory under concurrent stepping/IO. Revise target based on evidence."},
+    {"id":"P-NETWORK","status":"proposed","value":{"initial_cycle_hz_min":250,"initial_cycle_hz_max":500},"unit":"Hz","phase":"R3","issue":7,"acceptance":"Qualify actual frame protocol, arbitration, physical layer, command skew and feedback age; no nominal/data bitrate is pre-approved."},
+    {"id":"P-NUMERIC","status":"unresolved","value":null,"unit":"separate m, rad and derivative tolerances","phase":"R1","issue":10,"acceptance":"Derive numeric tolerances from conditioning, quantization, task needs and independent references; keep physical accuracy separate."},
+    {"id":"P-SKEW","status":"unresolved","value":null,"unit":"us and resulting path error","phase":"R1","issue":3,"acceptance":"Qualify local-axis application skew in R1, then extend the budget through clock uncertainty and remote-drive timing in R3; bound resulting path error for each profile."},
+    {"id":"P-HORIZON","status":"unresolved","value":null,"unit":"us plus segment/event capacity","phase":"R1","issue":3,"acceptance":"Budget production delay, detection, stop generation and execution horizon so stopping starts before usable data expires."},
+    {"id":"P-HEARTBEAT","status":"unresolved","value":null,"unit":"us","phase":"R1","issue":9,"acceptance":"Derive lease timeout from qualified stop envelope, host latency and failure response; no arbitrary universal timeout."},
+    {"id":"P-STOP","status":"unresolved","value":null,"unit":"time, joint/TCP envelope and support conditions","phase":"R1","issue":9,"acceptance":"Measure detection-to-rest/support behavior under gravity, payload, lost actuation and power faults for each configuration."},
+    {"id":"P-THERMAL","status":"unresolved","value":null,"unit":"C, A and hysteresis/duration","phase":"R1","issue":9,"acceptance":"Establish component/material limits, sensor uncertainty, warning/derating/trip behavior and gravity-support margin."},
+    {"id":"P-FEEDBACK","status":"unresolved","value":null,"unit":"us, counts, rad and uncertainty","phase":"R2","issue":6,"acceptance":"Qualify sampling, age, wrap ambiguity, noise and following-error thresholds per sensor and mode."},
+    {"id":"P-FRAME","status":"unresolved","value":null,"unit":"bytes, outstanding frames and parser budget","phase":"R1","issue":5,"acceptance":"Choose bounded frame/queue/parser limits from actual commands, memory and worst-case traffic; fuzz limits and overflow paths."},
+    {"id":"P-CLOCK","status":"unresolved","value":null,"unit":"us and ppm","phase":"R1","issue":5,"acceptance":"Qualify controller/host/drive epoch mapping, clock error, drift and permitted scheduling horizon."},
+    {"id":"P-ENDURANCE","status":"unresolved","value":null,"unit":"cycles, failures, interventions and operating envelope","phase":"R1","issue":10,"acceptance":"Define product/task reliability objective, test population and stopping rules before endurance testing; report every intervention and failure."}
+  ]
+}

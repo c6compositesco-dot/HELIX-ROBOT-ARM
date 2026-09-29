@@ -1,0 +1,24 @@
+add_executable(helix_trajectory_tests tests/trajectory_transactions.cpp)
+add_executable(helix_admission_demo examples/admission_demo.cpp)
+foreach(target helix_trajectory_tests helix_admission_demo)
+  target_link_libraries(${target} PRIVATE helix_core)
+  set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    if(HELIX_SANITIZERS)
+      target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+      target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+    endif()
+  endif()
+endforeach()
+foreach(suite trajectory_bounds trajectory_transactions trajectory_preparation trajectory_properties)
+  add_test(NAME ${suite} COMMAND helix_trajectory_tests ${suite})
+endforeach()
+add_test(NAME trajectory_demo COMMAND helix_admission_demo)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_test(NAME trajectory_fast_math_guard COMMAND ${CMAKE_COMMAND}
+    -DCXX=${CMAKE_CXX_COMPILER}
+    -DINCLUDES=${CMAKE_CURRENT_SOURCE_DIR}/include
+    -DWORK=${CMAKE_CURRENT_BINARY_DIR}/fp-guard
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_fp_guard.cmake)
+endif()

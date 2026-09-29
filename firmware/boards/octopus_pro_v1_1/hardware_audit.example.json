@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "deployable": false,
+  "board_family": "BTT Octopus Pro V1.1",
+  "verified_mcu_marking": null,
+  "verified_clock_hz": null,
+  "bootloader_offset_bytes": null,
+  "existing_firmware_source_commit": null,
+  "existing_image_sha256": null,
+  "verified_pin_map": null,
+  "timer_dma_allocation": null,
+  "joint_calibration": null,
+  "can_transceiver_part": null,
+  "qualified_can_nominal_bitrate": null,
+  "qualified_can_data_bitrate": null,
+  "power_loss_and_stop_test_record": null
+}

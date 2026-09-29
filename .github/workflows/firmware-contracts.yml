@@ -1,0 +1,45 @@
+name: Firmware contracts
+on:
+  push:
+    paths: ['firmware/**', '.github/workflows/firmware-contracts.yml']
+  pull_request:
+    paths: ['firmware/**', '.github/workflows/firmware-contracts.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+        build_type: [Debug, Release]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure
+        run: cmake -S firmware -B firmware/build -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+      - name: Build
+        run: cmake --build firmware/build --parallel
+      - name: Test
+        run: ctest --test-dir firmware/build --output-on-failure
+      - name: Ensure hardware image stays blocked
+        shell: bash
+        run: |
+          if cmake -S firmware -B firmware/build-forbidden -DHELIX_BUILD_BOARD_IMAGE=ON > firmware/board-gate.log 2>&1; then
+            echo 'Unexpected hardware-image configure success'; exit 1
+          fi
+          grep -q 'Board image intentionally unavailable' firmware/board-gate.log
+  sanitizers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: cmake -S firmware -B firmware/build -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Debug -DHELIX_SANITIZERS=ON
+      - run: cmake --build firmware/build --parallel
+      - run: ctest --test-dir firmware/build --output-on-failure
